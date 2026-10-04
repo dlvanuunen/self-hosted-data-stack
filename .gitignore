@@ -3,6 +3,13 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+
+
+
+#
+/docker/.env-local
+
+
 # C extensions
 *.so
 

@@ -1,0 +1,89 @@
+x-superset-common: &superset-common
+  image: custom-superset:6.1.0
+  env_file: .env
+  volumes:
+    - ./config/superset_config.py:/app/pythonpath/superset_config.py:ro
+  depends_on:
+    - superset-db
+    - superset-redis
+services:
+  superset-db:
+    image: postgres:16
+    container_name: superset-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: superset
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD}
+    volumes:
+      - superset-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "superset"]
+      interval: 10s
+      retries: 3
+  superset-redis:
+    image: redis:7-alpine
+    container_name: superset-redis
+    restart: unless-stopped
+    volumes:
+      - superset-redis-data:/data
+  superset-init:
+    <<: *superset-common
+    build: .
+    container_name: superset-init
+    command: >
+      bash -c "superset db upgrade &&
+      superset fab create-admin --username ${SUPERSET_ADMIN_USER} --firstname Admin --lastname User --email ${SUPERSET_ADMIN_EMAIL} --password ${SUPERSET_ADMIN_PASSWORD} &&
+      superset init"
+    depends_on:
+      superset-db:
+        condition: service_healthy
+  superset:
+    <<: *superset-common
+    container_name: superset
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8088:8088"
+    depends_on:
+      - superset-init
+  superset-worker:
+    <<: *superset-common
+    container_name: superset-worker
+    restart: unless-stopped
+    command: celery --app=superset.tasks.celery_app:app worker
+    depends_on:
+      - superset-init
+    healthcheck:
+        test: ["CMD-SHELL", "celery -A superset.tasks.celery_app:app inspect ping -d celery@$$HOSTNAME"]
+
+  superset-beat:
+    <<: *superset-common
+    container_name: superset-beat
+    restart: unless-stopped
+    command: celery --app=superset.tasks.celery_app:app beat --schedule /tmp/celerybeat-schedule --pidfile /tmp/celerybeat.pi
+    depends_on:
+      - superset-init
+
+# EXTENDED 
+  warehouse-db:
+    image: postgres:16
+    container_name: warehouse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: warehouse
+      POSTGRES_USER: warehouse
+      POSTGRES_PASSWORD: ${WAREHOUSE_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - warehouse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "warehouse"]
+      interval: 10s
+      retries: 3
+
+
+volumes:
+  superset-db-data:
+  superset-redis-data:
+  warehouse-db-data:
